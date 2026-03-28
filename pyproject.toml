@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "giraf-imagegen"
+version = "0.1.0"
+description = "Local GPU image generation service for the GIRAF platform"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "torch",
+    "diffusers>=0.31",
+    "transformers",
+    "accelerate",
+    "safetensors",
+    "sentencepiece",
+    "pillow",
+]
+
+[project.optional-dependencies]
+serve = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+
+[project.scripts]
+imagegen-serve = "giraf_imagegen.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["giraf_imagegen"]
