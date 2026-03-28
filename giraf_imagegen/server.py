@@ -22,13 +22,13 @@ from giraf_imagegen.pipeline import ImagePipeline
 log = logging.getLogger(__name__)
 
 _pipeline: ImagePipeline | None = None
-_generate_lock: asyncio.Lock | None = None
+_generate_lock: asyncio.Lock = asyncio.Lock()
 _config: dict = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _pipeline, _generate_lock, _config
+    global _pipeline, _config
 
     _config = get_config()
     log.info(
@@ -41,9 +41,12 @@ async def lifespan(app: FastAPI):
         dtype=_config["dtype"],
         gpu_mem_fraction=_config["gpu_mem_fraction"],
     )
-    _generate_lock = asyncio.Lock()
     log.info("giraf-imagegen ready.")
     yield
+    if _pipeline is not None and _pipeline._device.type == "cuda":
+        import torch
+        del _pipeline
+        torch.cuda.empty_cache()
     _pipeline = None
 
 
@@ -52,8 +55,8 @@ app = FastAPI(title="GIRAF ImageGen", lifespan=lifespan)
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
-    width: int = Field(default=512, ge=64, le=1024)
-    height: int = Field(default=512, ge=64, le=1024)
+    width: int = Field(default=512, ge=64, le=4096)
+    height: int = Field(default=512, ge=64, le=4096)
     steps: int | None = Field(default=None, ge=1, le=100)
     guidance_scale: float = Field(default=0.0, ge=0.0, le=30.0)
     seed: int | None = None
@@ -65,17 +68,21 @@ async def generate(req: GenerateRequest):
     if _pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
-    width = min(req.width, _config["max_width"])
-    height = min(req.height, _config["max_height"])
-    steps = req.steps or _config["default_steps"]
+    max_w, max_h = _config["max_width"], _config["max_height"]
+    if req.width > max_w or req.height > max_h:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Max dimensions: {max_w}x{max_h}",
+        )
+    steps = req.steps if req.steps is not None else _config["default_steps"]
 
     async with _generate_lock:
         try:
             image_bytes = await asyncio.to_thread(
                 _pipeline.generate_bytes,
                 prompt=req.prompt,
-                width=width,
-                height=height,
+                width=req.width,
+                height=req.height,
                 num_inference_steps=steps,
                 guidance_scale=req.guidance_scale,
                 seed=req.seed,
@@ -83,7 +90,7 @@ async def generate(req: GenerateRequest):
             )
         except Exception as e:
             log.exception("Generation failed")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Image generation failed") from e
 
     media_type = {
         "png": "image/png",

@@ -41,15 +41,9 @@ class ImagePipeline:
             torch_dtype=self._torch_dtype,
         )
 
-        if self._device.type == "cuda":
-            if gpu_mem_fraction < 1.0:
-                torch.cuda.set_per_process_memory_fraction(gpu_mem_fraction)
-            self._pipe.to(self._device)
-        elif self._device.type == "xpu":
-            self._pipe.to(self._device)
-        else:
-            # CPU fallback or ROCm (also reports as "cuda" via HIP)
-            self._pipe.to(self._device)
+        if self._device.type == "cuda" and gpu_mem_fraction < 1.0:
+            torch.cuda.set_per_process_memory_fraction(gpu_mem_fraction)
+        self._pipe.to(self._device)
 
         log.info("Pipeline ready on %s.", self._device)
 
